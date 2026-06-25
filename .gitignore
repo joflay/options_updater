@@ -1,0 +1,19 @@
+.env
+*.log
+*.pyc
+__pycache__/
+.venv/
+.venv_root_empty/
+
+# Generated datasets and local pipeline outputs
+Constituency/
+clean stocks/
+final_features/
+final_features_regular_greeks/
+lseg_constituency_debug/
+options_data/
+raw stocks archive/
+
+# Local editor/workspace metadata
+.DS_Store
+*.code-workspace

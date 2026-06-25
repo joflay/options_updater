@@ -1,0 +1,8 @@
+massive
+boto3
+numpy
+pandas
+scipy
+yfinance
+matplotlib
+lseg-data
