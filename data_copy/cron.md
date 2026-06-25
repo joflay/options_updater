@@ -6,12 +6,12 @@ This cron wrapper runs `Data_Pipeline/main.py` with all mutable pipeline data po
 /srv/data/options_model_features
 ```
 
-It uses the project virtualenv when available, writes logs under `/srv/data/options_model_features/logs`, and uses `flock` so a second run will not start while the previous run is still active.
+It uses the project virtualenv when available, writes logs under the updater checkout `logs/` directory, and uses `flock` so a second run will not start while the previous run is still active.
 
 Example crontab entry for a weekday run at 7:15 UTC:
 
 ```cron
-15 7 * * 1-5 /home/joflay/Options_Model/data_copy/run_main_to_srv.sh
+15 7 * * 1-5 /home/joflay/options_updater/data_copy/run_main_to_srv.sh
 ```
 
 Install or edit cron with:
@@ -30,10 +30,10 @@ Useful paths:
 | `/srv/data/options_model_features/options_data/features/day_aggs_v1/` | Daily stock/date feature outputs. |
 | `/srv/data/options_model_features/options_data/features/underlying_close_cache.csv` | Underlying close cache used during option processing. |
 | `/srv/data/options_model_features/final_features/` | Split final feature CSVs. |
-| `/srv/data/options_model_features/logs/main_pipeline_latest.log` | Symlink to the latest cron run log. |
+| `/home/joflay/options_updater/logs/main_pipeline_latest.log` | Symlink to the latest cron run log. |
 
 Run manually:
 
 ```bash
-/home/joflay/Options_Model/data_copy/run_main_to_srv.sh
+/home/joflay/options_updater/data_copy/run_main_to_srv.sh
 ```

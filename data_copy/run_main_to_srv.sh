@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 DATA_ROOT="${OPTIONS_DATASET_ROOT:-/srv/data/options_model_features}"
-LOG_DIR="${OPTIONS_CRON_LOG_DIR:-$DATA_ROOT/logs}"
+LOG_DIR="${OPTIONS_CRON_LOG_DIR:-$REPO_ROOT/logs}"
 LOCK_FILE="${OPTIONS_CRON_LOCK_FILE:-$DATA_ROOT/main_pipeline.lock}"
 
 export OPTIONS_DATASET_ROOT="$DATA_ROOT"

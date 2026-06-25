@@ -17,3 +17,6 @@ raw stocks archive/
 # Local editor/workspace metadata
 .DS_Store
 *.code-workspace
+
+# Local cron logs
+logs/
