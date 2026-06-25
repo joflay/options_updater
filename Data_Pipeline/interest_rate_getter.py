@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 import json
 import os
+from typing import Optional
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -12,11 +13,13 @@ from config import DATA_DIR
 
 SERIES_ID = "DGS3MO"
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+DEFAULT_RISK_FREE_RATE_CSV = Path("/srv/data/risk_free_rate/DGS3MO_risk_free_rate.csv")
 ENV_CANDIDATES = (
     Path(__file__).with_name(".env"),
     Path(__file__).resolve().parent.parent / ".env",
 )
 FRED_API_KEY_NAMES = {"FRED_API_KEY", "fred_api", "Fred_Key", "FRED_KEY"}
+RISK_FREE_RATE_CSV_NAMES = {"OPTIONS_RISK_FREE_RATE_CSV", "RISK_FREE_RATE_CSV"}
 
 # AGENTS: Standalone default-date helper; duplicated concept in main.py and flat_file.py.
 def two_years_ago(end_date: date) -> date:
@@ -50,6 +53,64 @@ def load_fred_api_key() -> str:
         "Missing FRED API key. Set FRED_API_KEY, FRED_KEY, Fred_Key, or fred_api "
         "in Data_Pipeline/.env."
     )
+
+def risk_free_rate_csv_path() -> Path:
+    """Return the configured local risk-free rate CSV path."""
+    for key_name in RISK_FREE_RATE_CSV_NAMES:
+        value = os.environ.get(key_name)
+        if value:
+            return Path(value).expanduser()
+    return DEFAULT_RISK_FREE_RATE_CSV
+
+def load_local_risk_free_rates(
+    start_date: date,
+    end_date: date,
+    series_id: str = SERIES_ID,
+    path: Optional[Path] = None,
+) -> pd.DataFrame:
+    """Load local risk-free rates in the same date/rate shape as fetch_fred_series()."""
+    csv_path = path or risk_free_rate_csv_path()
+    if not csv_path.exists():
+        return pd.DataFrame(columns=["date", "rate"])
+
+    df = pd.read_csv(csv_path)
+    date_column = "Date" if "Date" in df.columns else "date" if "date" in df.columns else None
+    if date_column is None:
+        raise ValueError(f"Local risk-free rate CSV is missing a Date/date column: {csv_path}")
+
+    if "series_id" in df.columns:
+        df = df[df["series_id"].astype(str).str.upper() == series_id.upper()].copy()
+
+    if "risk_free_rate" in df.columns:
+        rate_column = "risk_free_rate"
+        divide_by_100 = False
+    elif "rate" in df.columns:
+        rate_column = "rate"
+        divide_by_100 = False
+    elif "risk_free_rate_percent" in df.columns:
+        rate_column = "risk_free_rate_percent"
+        divide_by_100 = True
+    elif "value" in df.columns:
+        rate_column = "value"
+        divide_by_100 = True
+    else:
+        raise ValueError(
+            f"Local risk-free rate CSV is missing a supported rate column: {csv_path}"
+        )
+
+    rates = pd.DataFrame(
+        {
+            "date": pd.to_datetime(df[date_column], errors="coerce"),
+            "rate": pd.to_numeric(df[rate_column], errors="coerce"),
+        }
+    ).dropna(subset=["date", "rate"])
+    if divide_by_100:
+        rates["rate"] = rates["rate"] / 100.0
+
+    start_ts = pd.Timestamp(start_date)
+    end_ts = pd.Timestamp(end_date)
+    rates = rates[(rates["date"] >= start_ts) & (rates["date"] <= end_ts)]
+    return rates.sort_values("date").reset_index(drop=True)
 
 # AGENTS: Mission-critical for IV pipeline; supplies DGS3MO risk-free rates used by option pricing.
 def fetch_fred_series(series_id: str, start_date: date, end_date: date, api_key: str) -> pd.DataFrame:

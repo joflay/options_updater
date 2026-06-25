@@ -91,9 +91,25 @@ OVERWRITE_STOCKS = False
 # Keep per-day IV outputs as restart checkpoints; flatfile_iv reprocesses stale schemas.
 OVERWRITE_OPTIONS = False
 REQUIRE_COMPLETE_OPTION_FLATFILES = True
+DEFAULT_OPTIONS_WORKERS = 4
+
+
+def positive_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from exc
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
 LIMIT_SYMBOLS: Optional[int] = None
 LIMIT_OPTION_FILES: Optional[int] = None
-OPTIONS_WORKERS = max(1, available_cpu_count())
+OPTIONS_WORKERS = positive_int_env("OPTIONS_WORKERS", DEFAULT_OPTIONS_WORKERS)
 YFINANCE_BATCH_SIZE = 10
 YFINANCE_RATE_LIMIT_SLEEP_SECONDS = 5 * 60
 MIN_CLOSE_PRICE = 5.0
@@ -630,6 +646,37 @@ def available_option_date_range(input_root: Path) -> Tuple[Optional[date], Optio
         return None, None
     return min(dates), max(dates)
 
+
+def daily_csv_dates(root: Path) -> Set[date]:
+    dates: Set[date] = set()
+    if not root.exists():
+        return dates
+    for path in root.rglob("*.csv"):
+        try:
+            dates.add(datetime.strptime(path.stem, "%Y-%m-%d").date())
+        except ValueError:
+            continue
+    return dates
+
+
+def latest_atm_computed_date() -> Optional[date]:
+    contract_dates = daily_csv_dates(OPTIONS_OUTPUT_ROOT)
+    feature_dates = daily_csv_dates(DAILY_FEATURES_ROOT)
+    completed_dates = contract_dates & feature_dates
+    if not completed_dates:
+        print(
+            "No completed ATM_Normalized_Options dates found; "
+            "option stage will only process raw dates in the active run window."
+        )
+        return None
+    latest_date = max(completed_dates)
+    print(
+        f"ATM_Normalized_Options completed through {latest_date.isoformat()} "
+        f"({len(completed_dates)} date(s) with contracts and features)"
+    )
+    return latest_date
+
+
 # AGENTS: Mission-critical batching helper for yfinance downloads; repeated pattern exists in legacy stock_data_getter.py.
 def chunked(values: List[str], size: int) -> Iterable[List[str]]:
     for idx in range(0, len(values), size):
@@ -861,6 +908,34 @@ def run_options_pipeline(
         print(f"No option flatfiles found under {OPTIONS_INPUT_ROOT} for {start_date} -> {end_date}")
         return {"files": 0, "feature_rows": 0}
 
+    latest_computed_date = latest_atm_computed_date()
+    before_resume_filter = len(files)
+    if latest_computed_date is not None:
+        files = [
+            path for path in files
+            if flatfile_iv.trade_date_from_path(path) > latest_computed_date
+        ]
+        skipped = before_resume_filter - len(files)
+        print(
+            f"Skipping {skipped} raw option flatfile(s) on or before "
+            f"latest completed ATM date {latest_computed_date.isoformat()}"
+        )
+    else:
+        newest_raw_date = max(flatfile_iv.trade_date_from_path(path) for path in files)
+        files = [
+            path for path in files
+            if flatfile_iv.trade_date_from_path(path) == newest_raw_date
+        ]
+        skipped = before_resume_filter - len(files)
+        print(
+            f"No ATM completion checkpoint found; skipping {skipped} older raw option "
+            f"flatfile(s) and processing newest raw date only: {newest_raw_date.isoformat()}"
+        )
+
+    if not files:
+        print("No new option flatfiles to process after ATM_Normalized_Options checkpoint filter")
+        return {"files": 0, "feature_rows": 0}
+
     temp_final_features_dir = FINAL_FEATURES_DIR.with_name(f".{FINAL_FEATURES_DIR.name}.tmp")
     if temp_final_features_dir.exists():
         shutil.rmtree(temp_final_features_dir)
@@ -967,9 +1042,25 @@ def run_options_pipeline(
 
 # AGENTS: Mission-critical phase 2; delegates raw OPRA downloads to flat_file.download_flat_files().
 def run_option_flatfile_pipeline() -> Dict[str, int]:
-    print("Ensuring OPRA option flatfiles exist for the stock coverage window")
+    print("Ensuring OPRA option flatfiles exist after the ATM_Normalized_Options checkpoint")
+    latest_computed_date = latest_atm_computed_date()
+    if latest_computed_date is None:
+        download_start = STOCK_END_DATE
+        print(
+            "No ATM_Normalized_Options checkpoint found; requesting newest stock-window "
+            f"date only: {download_start.isoformat()}"
+        )
+    else:
+        download_start = latest_computed_date + timedelta(days=1)
+    if download_start > STOCK_END_DATE:
+        print(
+            f"ATM_Normalized_Options is already complete through {latest_computed_date}; "
+            f"no raw option flatfile download needed through {STOCK_END_DATE}"
+        )
+        return {"downloaded": 0, "skipped_existing": 0, "failed": 0}
+
     stats = flat_file.download_flat_files(
-        start_date=STOCK_START_DATE,
+        start_date=download_start,
         end_date=STOCK_END_DATE,
         output_dir=OPTIONS_INPUT_ROOT,
     )

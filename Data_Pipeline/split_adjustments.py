@@ -630,7 +630,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=max(1, min(8, pipeline.available_cpu_count())),
+        default=pipeline.OPTIONS_WORKERS,
         help="Worker processes for IV and Greek row computations.",
     )
     parser.add_argument(

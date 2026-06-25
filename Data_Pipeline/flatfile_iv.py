@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config import DATA_DIR
 from interest_rate_getter import SERIES_ID as FRED_RISK_FREE_SERIES_ID
-from interest_rate_getter import fetch_fred_series, load_fred_api_key
+from interest_rate_getter import fetch_fred_series, load_fred_api_key, load_local_risk_free_rates, risk_free_rate_csv_path
 from utils import american_option_price_crr, compute_iv, hypothetical_atm_greeks
 
 # Run examples:
@@ -49,6 +49,7 @@ from utils import american_option_price_crr, compute_iv, hypothetical_atm_greeks
 
 SHARED_DATA_ROOT = Path(os.environ.get("OPTIONS_DATASET_ROOT", "/srv/data/options_model_features"))
 SHARED_FLATFILE_ROOT = SHARED_DATA_ROOT / "FlatFiles" / "us_options_opra" / "day_aggs_v1"
+ATM_NORMALIZED_ROOT = Path(os.environ.get("OPTIONS_ATM_NORMALIZED_ROOT", str(SHARED_DATA_ROOT / "ATM_Normalized_Options")))
 INPUT_ROOT = Path(
     os.environ.get(
         "OPTIONS_FLATFILES_ROOT",
@@ -59,8 +60,8 @@ INPUT_ROOT = Path(
         ),
     )
 )
-OUTPUT_ROOT = Path(os.environ.get("OPTIONS_IV_ROOT", str(Path(DATA_DIR) / "iv" / "us_options_opra" / "day_aggs_v1")))
-DAILY_FEATURES_ROOT = Path(os.environ.get("OPTIONS_DAILY_FEATURES_ROOT", str(Path(DATA_DIR) / "features" / "day_aggs_v1")))
+OUTPUT_ROOT = Path(os.environ.get("OPTIONS_IV_ROOT", str(ATM_NORMALIZED_ROOT / "contracts")))
+DAILY_FEATURES_ROOT = Path(os.environ.get("OPTIONS_DAILY_FEATURES_ROOT", str(ATM_NORMALIZED_ROOT / "features" / "day_aggs_v1")))
 CACHE_OUTPUT = Path(os.environ.get("OPTIONS_CLOSE_CACHE", str(Path(DATA_DIR) / "features" / "underlying_close_cache.csv")))
 CLEAN_STOCK_ROOT = Path(os.environ.get("OPTIONS_CLEAN_STOCK_ROOT", str(Path(__file__).resolve().parent.parent / "clean stocks")))
 FINAL_FEATURES_DIR = Path(os.environ.get("OPTIONS_FINAL_FEATURES_DIR", str(Path(__file__).resolve().parent.parent / "final_features")))
@@ -68,6 +69,20 @@ SUPPORTED_UNDERLYING_RE = re.compile(r"^[A-Z]{1,5}$")
 OPRA_TICKER_RE = re.compile(r"^O:([A-Z]{1,6})(\d{6})([CP])(\d{8})$")
 DTE_MIN_DAYS = 30
 DTE_MAX_DAYS = 90
+DEFAULT_OPTIONS_WORKERS = 4
+
+
+def positive_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}") from exc
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
 DIVIDEND_YIELD_FIELD = "dividend_yield"
 StockHistoryCache = Dict[str, Optional[Tuple[pd.Series, pd.Series, pd.Series]]]
 IvTask = Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], str]
@@ -116,7 +131,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=max(1, min(8, os.cpu_count() or 1)),
+        default=positive_int_env("OPTIONS_WORKERS", DEFAULT_OPTIONS_WORKERS),
         help=(
             "Worker processes. Uses file-level parallelism when multiple input files "
             "are selected, otherwise row-level parallelism within the file."
@@ -168,12 +183,20 @@ def load_risk_free_rates_for_files(files: List[Path]) -> Dict[date, float]:
     if not trade_dates:
         return {}
 
-    api_key = load_fred_api_key()
     fetch_start_date = trade_dates[0] - timedelta(days=14)
-    rates = fetch_fred_series(FRED_RISK_FREE_SERIES_ID, fetch_start_date, trade_dates[-1], api_key)
+    local_rates = load_local_risk_free_rates(fetch_start_date, trade_dates[-1], FRED_RISK_FREE_SERIES_ID)
+    if not local_rates.empty:
+        print(
+            f"Loaded {len(local_rates)} {FRED_RISK_FREE_SERIES_ID} risk-free "
+            f"observations from {risk_free_rate_csv_path()}"
+        )
+        rates = local_rates
+    else:
+        api_key = load_fred_api_key()
+        rates = fetch_fred_series(FRED_RISK_FREE_SERIES_ID, fetch_start_date, trade_dates[-1], api_key)
     if rates.empty:
         raise ValueError(
-            f"FRED returned no {FRED_RISK_FREE_SERIES_ID} observations from "
+            f"No {FRED_RISK_FREE_SERIES_ID} risk-free observations found from "
             f"{fetch_start_date.isoformat()} to {trade_dates[-1].isoformat()}."
         )
 
@@ -216,7 +239,7 @@ def load_risk_free_rates_for_files(files: List[Path]) -> Dict[date, float]:
             sample = f"{sample}, ..."
         print(
             f"Filled {len(filled_dates)} missing {FRED_RISK_FREE_SERIES_ID} risk-free "
-            f"observation(s) with the most recent prior FRED rate: {sample}"
+            f"observation(s) with the most recent prior risk-free rate: {sample}"
         )
 
     missing_dates = [trade_date_value for trade_date_value in trade_dates if trade_date_value not in rates_by_date]
@@ -225,7 +248,7 @@ def load_risk_free_rates_for_files(files: List[Path]) -> Dict[date, float]:
         if len(missing_dates) > 10:
             sample = f"{sample}, ..."
         raise ValueError(
-            f"Missing FRED {FRED_RISK_FREE_SERIES_ID} risk-free observations for "
+            f"Missing {FRED_RISK_FREE_SERIES_ID} risk-free observations for "
             f"{len(missing_dates)} trade date(s): {sample}"
         )
 
