@@ -78,7 +78,7 @@ def available_cpu_count() -> int:
     return quota_count or os.cpu_count() or 1
 
 CONSTITUENCY_ROOT = Path(os.environ.get("OPTIONS_CONSTITUENCY_ROOT", str(PROJECT_ROOT / "Constituency")))
-STOCK_OUTPUT_ROOT = Path(os.environ.get("OPTIONS_CLEAN_STOCK_ROOT", str(PROJECT_ROOT / "clean stocks")))
+STOCK_OUTPUT_ROOT = Path(os.environ.get("OPTIONS_CLEAN_STOCK_ROOT", "/srv/data/stocks"))
 OPTIONS_INPUT_ROOT = flatfile_iv.INPUT_ROOT
 OPTIONS_OUTPUT_ROOT = flatfile_iv.OUTPUT_ROOT
 DAILY_FEATURES_ROOT = flatfile_iv.DAILY_FEATURES_ROOT
@@ -1135,12 +1135,15 @@ def main() -> None:
         f"from {snapshots[0][0]} through {snapshots[-1][0]}"
         )
 
-        print("Phase 3/5: Ensuring stock price coverage")
-        print(f"Stock coverage target: {stock_start} through {stock_end}")
-        stock_stats = run_stock_pipeline(membership_windows, stock_start, stock_end)
-        stats.stock_downloaded = stock_stats["downloaded"]
-        stats.stock_skipped_existing = stock_stats["skipped_existing"]
-        stats.stock_failed = stock_stats["failed"]
+        # Stock histories are maintained outside this project and read from
+        # OPTIONS_CLEAN_STOCK_ROOT (the cron wrapper defaults it to /srv/data/stocks).
+        # print("Phase 3/5: Ensuring stock price coverage")
+        # print(f"Stock coverage target: {stock_start} through {stock_end}")
+        # stock_stats = run_stock_pipeline(membership_windows, stock_start, stock_end)
+        # stats.stock_downloaded = stock_stats["downloaded"]
+        # stats.stock_skipped_existing = stock_stats["skipped_existing"]
+        # stats.stock_failed = stock_stats["failed"]
+        print(f"Phase 3/5: Using externally maintained stock histories from {STOCK_OUTPUT_ROOT}")
 
         print("Phase 4/5: Running option IV/Greek calculations")
         option_stats = run_option_calculation_pipeline(membership_windows, options_start, options_end)
